@@ -1,0 +1,4 @@
+{
+  "metodo": "DELETE",
+  "endpoint": "/clientes/1"
+}
