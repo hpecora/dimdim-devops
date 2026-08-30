@@ -15,6 +15,12 @@ if (-not $env:DIMDIM_DB_PASSWORD) {
     throw "A variavel DIMDIM_DB_PASSWORD nao existe nesta sessao."
 }
 
+$dbUser = $env:DIMDIM_DB_USER
+
+if ([string]::IsNullOrWhiteSpace($dbUser)) {
+    throw "Defina DIMDIM_DB_USER antes de executar este script."
+}
+
 $dbPassword = $env:DIMDIM_DB_PASSWORD
 
 Write-Host "Obtendo credenciais do ACR..."
@@ -33,7 +39,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Falha ao obter credenciais do ACR."
 }
 
-$connectionString = "Host=$dbHost;Port=5432;Database=dimdimdb;Username=dimdim;Password=$dbPassword"
+$connectionString = "Host=$dbHost;Port=5432;Database=dimdimdb;Username=$dbUser;Password=$dbPassword"
 
 Write-Host "Criando ACI da aplicacao..."
 

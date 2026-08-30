@@ -14,6 +14,13 @@ $dnsLabel = "rm556612-db-dimdim"
 
 Write-Host "Preparando credenciais..."
 
+# O usuario do banco deve existir apenas na sessao do PowerShell
+$dbUser = $env:DIMDIM_DB_USER
+
+if ([string]::IsNullOrWhiteSpace($dbUser)) {
+    throw "Defina DIMDIM_DB_USER antes de executar este script."
+}
+
 # Gera uma senha forte para o banco apenas nesta sessao
 if (-not $env:DIMDIM_DB_PASSWORD) {
     $env:DIMDIM_DB_PASSWORD = ([guid]::NewGuid().ToString("N") + "Aa1!")
@@ -32,6 +39,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "Falha ao habilitar acesso ao ACR."
 }
 
+Write-Host "Obtendo credenciais do ACR..."
+
 $acrUser = az acr credential show `
     --name $acrName `
     --query "username" `
@@ -42,11 +51,21 @@ $acrPassword = az acr credential show `
     --query "passwords[0].value" `
     --output tsv
 
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao obter credenciais do ACR."
+}
+
+Write-Host "Obtendo credencial da Conta de Armazenamento..."
+
 $storageKey = az storage account keys list `
     --resource-group $resourceGroup `
     --account-name $storageAccount `
     --query "[0].value" `
     --output tsv
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao obter a credencial da Conta de Armazenamento."
+}
 
 Write-Host "Criando ACI do banco..."
 
@@ -65,14 +84,14 @@ az container create `
     --cpu 1 `
     --memory 1.5 `
     --environment-variables `
-    "POSTGRES_USER=dimdim" `
-    "POSTGRES_DB=dimdimdb" `
---secure-environment-variables `
-    "POSTGRES_PASSWORD=$dbPassword" `
---azure-file-volume-account-name $storageAccount `
---azure-file-volume-account-key $storageKey `
---azure-file-volume-share-name $fileShare `
---azure-file-volume-mount-path "/backup" `
+        "POSTGRES_USER=$dbUser" `
+        "POSTGRES_DB=dimdimdb" `
+    --secure-environment-variables `
+        "POSTGRES_PASSWORD=$dbPassword" `
+    --azure-file-volume-account-name $storageAccount `
+    --azure-file-volume-account-key $storageKey `
+    --azure-file-volume-share-name $fileShare `
+    --azure-file-volume-mount-path "/backup" `
     --restart-policy Always `
     --output table
 

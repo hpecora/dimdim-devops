@@ -21,21 +21,39 @@ A solução utiliza dois containers:
 - **App:** API REST desenvolvida em .NET 8
 - **Banco:** PostgreSQL 16
 
-Na Azure, as imagens são armazenadas no Azure Container Registry e executadas em dois Azure Container Instances.
+As imagens Docker são construídas localmente e publicadas no Azure Container Registry.
 
-A persistência do banco é realizada por meio de backup e restauração automática utilizando Azure Files.
+Na nuvem, cada imagem é executada em um Azure Container Instance:
+
+- `rm556612-app-aci` - aplicação .NET
+- `rm556612-db-aci` - banco PostgreSQL
+
+A persistência dos dados é realizada por meio de backup e restauração automática utilizando Azure Files.
 
 ## Estrutura do projeto
 
 - `Program.cs` - API REST com CRUD de clientes
-- `Dockerfile` - imagem Docker da aplicação
+- `Dockerfile` - imagem Docker da aplicação .NET
 - `database/Dockerfile` - imagem Docker do PostgreSQL
 - `database/ddl.sql` - DDL da tabela `clientes`
-- `database/azure-entrypoint.sh` - rotina de backup e restauração
-- `tests/` - arquivos JSON utilizados nos testes
-- `azure/` - scripts de criação dos recursos Azure via CLI
+- `database/azure-entrypoint.sh` - rotina automática de backup e restauração
+- `tests/` - arquivos JSON utilizados nos testes da API
+- `azure/` - scripts Azure CLI para criação da infraestrutura
+
+## Scripts Azure
+
+Os recursos de nuvem são criados via Azure CLI pelos seguintes scripts:
+
+- `azure/00-register-providers.ps1`
+- `azure/01-resource-group.ps1`
+- `azure/02-acr.ps1`
+- `azure/03-storage.ps1`
+- `azure/04-db-aci.ps1`
+- `azure/05-app-aci.ps1`
 
 ## Banco de dados
+
+Banco utilizado: **PostgreSQL 16**
 
 Tabela utilizada:
 
@@ -63,13 +81,13 @@ docker build -t dimdim-db:latest ./database
 docker build -t dimdim-app:latest .
 ```
 
-## 3. Verificar imagens
+## 3. Verificar as imagens
 
 ```bash
 docker images
 ```
 
-## 4. Criar rede Docker
+## 4. Criar a rede Docker
 
 ```bash
 docker network create dimdim-net
@@ -77,12 +95,12 @@ docker network create dimdim-net
 
 ## 5. Executar o banco
 
-Exemplo para ambiente local:
+Exemplo:
 
 ```bash
 docker run --name dimdim-db-test \
   --network dimdim-net \
-  -e POSTGRES_USER=dimdim \
+  -e POSTGRES_USER=<DB_USER> \
   -e POSTGRES_PASSWORD=<SENHA_LOCAL> \
   -e POSTGRES_DB=dimdimdb \
   -p 5433:5432 \
@@ -94,18 +112,18 @@ docker run --name dimdim-db-test \
 ```bash
 docker run --name dimdim-app-test \
   --network dimdim-net \
-  -e "CONNECTION_STRING=Host=dimdim-db-test;Port=5432;Database=dimdimdb;Username=dimdim;Password=<SENHA_LOCAL>" \
+  -e "CONNECTION_STRING=Host=dimdim-db-test;Port=5432;Database=dimdimdb;Username=<DB_USER>;Password=<SENHA_LOCAL>" \
   -p 8080:8080 \
   -d dimdim-app:latest
 ```
 
-## 7. Verificar containers
+## 7. Verificar os containers
 
 ```bash
 docker ps
 ```
 
-## 8. Verificar usuário da aplicação
+## 8. Verificar o usuário da aplicação
 
 O container da aplicação não executa como root/admin:
 
@@ -123,7 +141,7 @@ app
 
 # CRUD
 
-Endpoints disponíveis:
+A API disponibiliza as quatro operações do CRUD para a tabela `clientes`.
 
 ## GET
 
@@ -173,14 +191,37 @@ Exemplo:
 DELETE /clientes/{id}
 ```
 
+## Arquivos JSON de teste
+
+Os arquivos utilizados nos testes estão no diretório `tests/`:
+
+```text
+tests/get.json
+tests/post.json
+tests/put.json
+tests/delete.json
+```
+
 ---
 
-# Validação diretamente no PostgreSQL
+# Validação local no PostgreSQL
 
-Para acessar o banco local:
+Para acessar diretamente o banco local:
 
 ```bash
-docker exec -it dimdim-db-test psql -U dimdim -d dimdimdb
+docker exec -it dimdim-db-test psql -U <DB_USER> -d dimdimdb
+```
+
+Listar as tabelas:
+
+```sql
+\dt
+```
+
+Visualizar a estrutura da tabela:
+
+```sql
+\d clientes
 ```
 
 Consultar os dados:
@@ -189,7 +230,7 @@ Consultar os dados:
 SELECT * FROM clientes;
 ```
 
-As operações CREATE, READ, UPDATE e DELETE devem ser validadas por SELECT diretamente no banco.
+As operações CREATE, READ, UPDATE e DELETE devem ser confirmadas por SELECT diretamente no PostgreSQL.
 
 ---
 
@@ -237,7 +278,7 @@ brazilsouth
 .\azure\02-acr.ps1
 ```
 
-Registry utilizado:
+Registry:
 
 ```text
 rm556612acr.azurecr.io
@@ -249,7 +290,7 @@ rm556612acr.azurecr.io
 az acr login --name rm556612acr
 ```
 
-## 6. Criar tags das imagens
+## 6. Criar as tags das imagens
 
 Aplicação:
 
@@ -263,7 +304,7 @@ Banco:
 docker tag dimdim-db:latest rm556612acr.azurecr.io/rm556612-db:latest
 ```
 
-## 7. Push das imagens
+## 7. Push das imagens para o ACR
 
 Aplicação:
 
@@ -277,10 +318,12 @@ Banco:
 docker push rm556612acr.azurecr.io/rm556612-db:latest
 ```
 
-## 8. Conferir imagens no ACR
+## 8. Conferir as imagens no ACR
 
 ```powershell
-az acr repository list --name rm556612acr --output table
+az acr repository list `
+  --name rm556612acr `
+  --output table
 ```
 
 Repositórios esperados:
@@ -290,7 +333,7 @@ rm556612-app
 rm556612-db
 ```
 
-## 9. Criar Storage Account e File Share
+## 9. Criar Storage Account e Azure File Share
 
 ```powershell
 .\azure\03-storage.ps1
@@ -303,7 +346,17 @@ Storage Account: rm556612storage
 File Share: pgdata
 ```
 
-## 10. Criar ACI do banco
+## 10. Configurar a sessão
+
+Antes de criar os containers, defina o usuário do banco apenas na sessão atual do PowerShell:
+
+```powershell
+$env:DIMDIM_DB_USER = "<DB_USER>"
+```
+
+O valor não é armazenado diretamente nos scripts.
+
+## 11. Criar o ACI do banco
 
 ```powershell
 .\azure\04-db-aci.ps1
@@ -315,21 +368,29 @@ ACI:
 rm556612-db-aci
 ```
 
-Durante a execução é criada uma senha para o PostgreSQL na variável de ambiente da sessão:
+Durante a execução, uma senha forte para o PostgreSQL é gerada automaticamente e armazenada apenas na variável de ambiente da sessão:
 
 ```text
 DIMDIM_DB_PASSWORD
 ```
 
-A senha não é armazenada no código-fonte.
+O usuário é obtido da variável:
 
-## 11. Criar ACI da aplicação
+```text
+DIMDIM_DB_USER
+```
 
-Execute na mesma sessão do PowerShell usada para criar o banco:
+Nenhuma senha ou chave é escrita diretamente no código-fonte.
+
+## 12. Criar o ACI da aplicação
+
+Na mesma sessão do PowerShell:
 
 ```powershell
 .\azure\05-app-aci.ps1
 ```
+
+O script utiliza as variáveis da sessão para construir de forma segura a conexão da aplicação com o PostgreSQL.
 
 ACI:
 
@@ -337,7 +398,7 @@ ACI:
 rm556612-app-aci
 ```
 
-Endpoint da aplicação:
+Endpoint:
 
 ```text
 http://rm556612-app-dimdim.brazilsouth.azurecontainer.io:8080
@@ -345,7 +406,35 @@ http://rm556612-app-dimdim.brazilsouth.azurecontainer.io:8080
 
 ---
 
+# Recursos criados na Azure
+
+Os principais recursos são:
+
+```text
+Resource Group:
+rm556612-rg
+
+Azure Container Registry:
+rm556612acr
+
+Azure Container Instance - App:
+rm556612-app-aci
+
+Azure Container Instance - Banco:
+rm556612-db-aci
+
+Storage Account:
+rm556612storage
+
+Azure File Share:
+pgdata
+```
+
+---
+
 # Testes na Azure
+
+Todos os testes abaixo utilizam o endpoint em nuvem do Azure Container Instance da aplicação.
 
 ## GET
 
@@ -367,9 +456,11 @@ Invoke-RestMethod `
 
 ## PUT
 
+Substitua `<ID>` pelo ID retornado no POST:
+
 ```powershell
 Invoke-RestMethod `
-  -Uri "http://rm556612-app-dimdim.brazilsouth.azurecontainer.io:8080/clientes/1" `
+  -Uri "http://rm556612-app-dimdim.brazilsouth.azurecontainer.io:8080/clientes/<ID>" `
   -Method Put `
   -ContentType "application/json" `
   -Body (Get-Content .\tests\put.json -Raw)
@@ -379,45 +470,58 @@ Invoke-RestMethod `
 
 ```powershell
 Invoke-RestMethod `
-  -Uri "http://rm556612-app-dimdim.brazilsouth.azurecontainer.io:8080/clientes/1" `
+  -Uri "http://rm556612-app-dimdim.brazilsouth.azurecontainer.io:8080/clientes/<ID>" `
   -Method Delete
 ```
 
 ---
 
-# Evidência diretamente no banco da Azure
+# Evidências diretamente no banco da Azure
 
-Obter o IP atual do banco:
+As operações realizadas pela API podem ser comprovadas diretamente no PostgreSQL em execução no ACI.
+
+Antes dos comandos:
 
 ```powershell
-az container show `
+$dbUser = $env:DIMDIM_DB_USER
+```
+
+## Listar tabelas
+
+```powershell
+az container exec `
   --resource-group rm556612-rg `
   --name rm556612-db-aci `
-  --query "ipAddress.ip" `
-  --output tsv
+  --exec-command "psql -U $dbUser -d dimdimdb -c '\dt'"
 ```
 
-Executar SELECT diretamente no PostgreSQL:
+## Consultar os registros
 
 ```powershell
-docker run --rm `
-  -e "PGPASSWORD=$env:DIMDIM_DB_PASSWORD" `
-  postgres:16 `
-  psql `
-  -h <IP_ATUAL_DO_BANCO> `
-  -p 5432 `
-  -U dimdim `
-  -d dimdimdb `
-  -c "SELECT * FROM clientes;"
+az container exec `
+  --resource-group rm556612-rg `
+  --name rm556612-db-aci `
+  --exec-command "psql -U $dbUser -d dimdimdb -c 'SELECT * FROM clientes;'"
 ```
+
+A demonstração do CRUD deve apresentar individualmente:
+
+```text
+POST   -> SELECT
+GET    -> SELECT
+PUT    -> SELECT
+DELETE -> SELECT
+```
+
+Dessa forma, cada operação realizada pela API é comprovada diretamente no banco PostgreSQL.
 
 ---
 
 # Persistência
 
-O container do PostgreSQL utiliza o Azure File Share `pgdata` para armazenar backups automáticos.
+O PostgreSQL utiliza o Azure File Share `pgdata` para armazenar backups automáticos.
 
-Arquivo utilizado:
+Arquivo persistido:
 
 ```text
 clientes-data.sql
@@ -431,16 +535,16 @@ database/azure-entrypoint.sh
 
 executa periodicamente `pg_dump` e grava o backup no Azure Files.
 
-Ao criar novamente o ACI do banco, o backup existente é usado para restaurar os dados.
+Quando um novo container de banco é criado, o backup existente é utilizado para restaurar os dados.
 
-A persistência foi validada com o seguinte processo:
+A persistência foi validada pelo seguinte processo:
 
-1. Inclusão de um registro no banco.
-2. Confirmação do registro via SELECT.
-3. Confirmação do registro dentro de `clientes-data.sql` no Azure Files.
-4. Exclusão completa do ACI do banco.
-5. Criação de um novo ACI do banco.
-6. Restauração automática do arquivo persistido.
+1. Inclusão de um registro no PostgreSQL.
+2. Confirmação do registro por SELECT.
+3. Confirmação do registro no arquivo `clientes-data.sql` no Azure Files.
+4. Exclusão do Azure Container Instance do banco.
+5. Criação de um novo Azure Container Instance.
+6. Restauração automática do backup.
 7. Novo SELECT confirmando que o registro continuava disponível.
 
 ---
@@ -449,10 +553,24 @@ A persistência foi validada com o seguinte processo:
 
 Nenhuma senha, token ou chave da Azure é armazenada diretamente no repositório.
 
-As credenciais são obtidas durante a execução dos scripts e armazenadas apenas em variáveis da sessão.
+O usuário do banco é fornecido em tempo de execução através da variável:
 
-O container da aplicação também executa como usuário sem privilégios administrativos:
+```text
+DIMDIM_DB_USER
+```
+
+A senha do banco é gerada e armazenada apenas na sessão através da variável:
+
+```text
+DIMDIM_DB_PASSWORD
+```
+
+Valores sensíveis são enviados ao Azure Container Instance utilizando `--secure-environment-variables`.
+
+O container da aplicação executa com usuário sem privilégios administrativos:
 
 ```dockerfile
 USER app
 ```
+
+Assim, a aplicação não executa como root/admin.
